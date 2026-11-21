@@ -1,0 +1,256 @@
+import socket # IP-osoitteiden ja porttien käsittelyä varten
+import threading # Mahdollistaa useiden porttien skannauksen samanaikaisesti
+import time # Suoritusajan mittaamiseen
+import os # Tiedostojen ja kansioiden käsittelyyn
+from datetime import datetime # Aikaleiman lisäämiseen tallenteisiin
+
+# Tallennuskansio skannaustuloksille
+TALLENNUSKANSIO = "skannaukset"
+os.makedirs(TALLENNUSKANSIO, exist_ok=True)
+
+#print("Muista että ilman IP-osoitteen haltijan lupaa porttien skannaaminen on laitonta. Käytä luvallisia osoitteita tai localhost-toimintoa.")
+
+# Lista tallentaa nykyisen skannauksen tulokset
+skannaus_tulokset = []
+
+ALARAJA = 1
+YLARAJA = 65535
+AUKI_LKM = 0
+
+#Laskee montako kertaa sana "auki" esiintyy skannaus tuloksessa ja nostaa auki olevien porttien lukumäärää 
+def laske_auki_portit():
+    return sum(1 for rivi in skannaus_tulokset if "auki" in rivi.lower())
+
+
+# Skannaa yksittäisen portin annetusta IP-osoitteesta ja lisää tulos listaan
+def port_scan(target_ip, port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1)  # Yhden sekunnin timeout per portti
+    start_time = time.time()  # Tallennetaan aloitusaika
+    try:
+        s.connect((target_ip, port))
+        tulos = f"Portti {port} on auki"
+        print(tulos)
+        skannaus_tulokset.append(tulos)
+        s.close()
+    except:
+        tulos = f"Portti {port} on kiinni"
+        print(tulos)
+        skannaus_tulokset.append(tulos)
+
+# Tallentaa skannauksen tulokset tiedostoon: sisältää IP:n, aikaleiman ja skannattujen porttien määrän
+def tallenna_tulokset(ip_osoite):
+    nimi = input("Anna tiedostolle nimi (ilman .txt): ").strip()
+    polku = os.path.join(TALLENNUSKANSIO, f"{nimi}.txt")
+    aikaleima = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    porttien_maara = len(skannaus_tulokset)
+
+    with open(polku, "w", encoding="utf-8") as tiedosto:
+        tiedosto.write(f"Aikaleima: {aikaleima}\n")
+        tiedosto.write(f"Skannattu IP-osoite: {ip_osoite}\n")
+        tiedosto.write(f"Skannattujen porttien määrä: {porttien_maara}\n")
+        AUKI_LKM = laske_auki_portit()
+        tiedosto.write(f"Auki olevien porttien määrä: {AUKI_LKM}\n\n")
+        tiedosto.write("\n".join(skannaus_tulokset))
+    print(f"Tulokset tallennettu tiedostoon: {polku}")
+
+# Listaa kaikki tallennuskansiossa olevat skannaustiedostot
+def listaa_tiedostot():
+    tiedostot = os.listdir(TALLENNUSKANSIO)
+    if not tiedostot:
+        print("Ei tallennettuja tiedostoja.")
+    else:
+        print("\nTallennetut tiedostot:")
+        for tiedosto in tiedostot:
+            print(f"- {tiedosto}")
+
+# Näyttää valitun tiedoston sisällön
+def nayta_tiedoston_sisalto():
+    listaa_tiedostot()
+    nimi = input("\nAnna tiedoston nimi jonka haluat avata (ilman .txt): ").strip()
+    polku = os.path.join(TALLENNUSKANSIO, f"{nimi}.txt")
+    try:
+        with open(polku, "r", encoding="utf-8") as tiedosto:
+            sisalto = tiedosto.read()
+            print(f"\nTiedoston '{nimi}.txt' sisältö:\n")
+            print(sisalto)
+    except FileNotFoundError:
+        print("Tiedostoa ei löytynyt.")
+
+# Poistaa käyttäjän määrittämän tiedoston tallennuskansiosta
+def poista_tiedosto():
+    listaa_tiedostot()
+    nimi = input("\nAnna poistettavan tiedoston nimi (ilman .txt): ").strip()
+    polku = os.path.join(TALLENNUSKANSIO, f"{nimi}.txt")
+    if os.path.exists(polku):
+        os.remove(polku)
+        print(f"Tiedosto '{nimi}.txt' poistettu.")
+    else:
+        print("Tiedostoa ei löytynyt.")
+
+# Suorittaa testiskannauksen localhostiin (yleiset portit)
+def testaa_localhost():
+    t_IP = "127.0.0.1"
+    testiportit = [21, 22, 23, 25, 53, 80, 110, 443, 8080]
+    print(f"\nSuoritetaan testiskannaus osoitteelle {t_IP}...")
+
+    skannaus_tulokset.clear()
+    start_time = time.time()
+
+    threads = []
+    for port in testiportit:
+        thread = threading.Thread(target=port_scan, args=(t_IP, port))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    end_time = time.time()
+    print(f"Testiskannaus valmis ajassa: {end_time - start_time:.2f}s")
+    print(f"Auki olevia portteja: {laske_auki_portit()}")
+
+    if skannaus_tulokset:
+        # Looppaa kunnes valinta onnistuu
+        while True:
+            try:
+                haluako_tallentaa = input("Tallennetaanko testitulokset? (k/e): ").strip().lower()
+                if haluako_tallentaa == "k":
+                    try:
+                        tallenna_tulokset(t_IP)
+                        print("Tulokset tallennettu onnistuneesti.")
+                        break  # Poistutaan loopista onnistuneen tallennuksen jälkeen
+                    except Exception as e:
+                        print(f"Virhe tallennettaessa tuloksia: {e}")
+                elif haluako_tallentaa == "e":
+                    print("Tuloksia ei tallennettu.")
+                    break  # Poistutaan loopista, koska käyttäjä ei halua tallentaa
+                else:
+                    print("Virheellinen syöte. Syötä 'k' (kyllä) tai 'e' (ei).")
+            except Exception as e:
+                print(f"Syötteen käsittelyssä tapahtui virhe: {e}")
+
+def nayta_kayttoohje():
+    print("\n--- Käyttöohje ---")
+    print("Tämä ohjelma on porttiskanneri, joka voi tarkistaa tietyn IP-osoitteen porttien tilan.")
+    print("\nToiminnot:")
+    print("1. Skannaa IP: Tämä vaihtoehto mahdollistaa tietyn IP-osoitteen ja porttialueen skannauksen syöttämällä toimiva IP-osoite ja portit, jotka haluat skannata.")
+    print("2. Listaa tallennetut tiedostot: Tulostaa kaikki tallennetut skannaukset allekkain konsoliisi.")
+    print("3. Näytä tiedoston sisältö: Avaa ja näytää aiemmin tallennetun skannauksen sisällön.")
+    print("4. Poista tiedosto: Mahdollistaa aiemmin tallennetun skannauksen poistamisen.")
+    print("5. Suorita yleisimpien porttien testiskannaus localhostiin. (Portit: 21, 22, 23, 25, 53, 80, 110, 443, 8080)")
+    print("6. Käyttöohje: Tulostaa tämän käyttöohjeen")
+    print("7. Poistu: Sulkee ohjelman.")
+
+# Sovelluksen päävalikko ja käyttöliittymä
+def main():
+    while True:
+        print("\nMuista että ilman IP-osoitteen haltijan lupaa porttien skannaaminen on laitonta. Käytä luvallisia osoitteita tai localhost-toimintoa.")
+        print("\n--- Valikko ---")
+        print("1. Skannaa IP")
+        print("2. Listaa tallennetut tiedostot")
+        print("3. Näytä tiedoston sisältö")
+        print("4. Poista tiedosto")
+        print("5. Suorita yleisimpien porttien testiskannaus localhostiin")
+        print("6. Käyttöohje")
+        print("7. Poistu")
+        valinta = input("Valitse toiminto (1-7): ").strip()
+
+        if valinta == "1":
+            target = input('Mitä haluat skannata? (esim. localhost tai IP-osoite): ')
+            try:
+                t_IP = socket.gethostbyname(target)
+            except socket.gaierror:
+                print("Virheellinen osoite. Yritä uudelleen.")
+                continue
+
+            print("Skannaus on aloitettu:", t_IP)
+
+            ports = input("Mitä portteja haluat skannata? (esim. 20-25,80,443): ")
+            port_list = []
+            skannaus_tulokset.clear()
+
+            for item in ports.split(','):
+                item = item.strip()
+                if '-' in item:
+                    try:
+                        start, end = map(int, item.split('-'))
+                        if start < ALARAJA or end > YLARAJA:
+                            print(f"Porttialueen on oltava välillä {ALARAJA}-{YLARAJA}.")
+                            continue
+                        port_list.extend(range(start, end + 1))
+                    except ValueError:
+                        print("Virhe porttialueessa.")
+                        continue
+                else:
+                    try:
+                        port = int(item)
+                        if port < ALARAJA or port > YLARAJA:
+                            print(f"Portin {port} on oltava välillä {ALARAJA}-{YLARAJA}.")
+                            continue
+                        port_list.append(port)
+                    except ValueError:
+                        print(f"Virheellinen portti: {item}")
+                        continue
+
+            start_time = time.time()
+
+            threads = []
+            for port in port_list:
+                thread = threading.Thread(target=port_scan, args=(t_IP, port))
+                threads.append(thread)
+                thread.start()
+
+            for thread in threads:
+                thread.join()
+
+            end_time = time.time()
+            print(f"Skannaus valmis ajassa: {end_time - start_time:.2f}s")
+            print(f"Auki olevia portteja: {laske_auki_portit()}")
+
+            if skannaus_tulokset:
+                # Looppaa kunnes valinta onnistuu
+                while True:
+                    try:
+                        haluako_tallentaa = input("Tallennetaanko testitulokset? (k/e): ").strip().lower()
+                        if haluako_tallentaa == "k":
+                            try:
+                                tallenna_tulokset(t_IP)
+                                print("Tulokset tallennettu onnistuneesti.")
+                                break  # Poistutaan loopista onnistuneen tallennuksen jälkeen
+                            except Exception as e:
+                                print(f"Virhe tallennettaessa tuloksia: {e}")
+                        elif haluako_tallentaa == "e":
+                            print("Tuloksia ei tallennettu.")
+                            break  # Poistutaan loopista, koska käyttäjä ei halua tallentaa
+                        else:
+                            print("Virheellinen syöte. Syötä 'k' (kyllä) tai 'e' (ei).")
+                    except Exception as e:
+                        print(f"Syötteen käsittelyssä tapahtui virhe: {e}")
+
+
+        elif valinta == "2":
+            listaa_tiedostot()
+
+        elif valinta == "3":
+            nayta_tiedoston_sisalto()
+
+        elif valinta == "4":
+            poista_tiedosto()
+
+        elif valinta == "5":
+            testaa_localhost()
+
+        elif valinta == "6":
+            nayta_kayttoohje()
+
+        elif valinta == "7":
+            print("Ohjelma lopetetaan.")
+            break
+
+        else:
+            print("Virheellinen valinta.")
+
+# Käynnistää ohjelman
+if __name__ == "__main__":
+    main()
